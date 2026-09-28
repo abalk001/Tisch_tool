@@ -1,12 +1,23 @@
 # TISCH2 Downloader
 
-A small, dependency-free Go tool for bulk-downloading single-cell RNA-seq data
-from the **TISCH2** gallery (Tumor Immune Single-cell Hub 2,
-<https://tisch.compbio.cn/gallery/>).
+A small tool for bulk-downloading single-cell RNA-seq data from the **TISCH2**
+gallery (Tumor Immune Single-cell Hub 2, <https://tisch.compbio.cn/gallery/>).
 
 It scrapes the gallery for the full list of dataset IDs and downloads the
 per-dataset data files that the site publishes, with parallel workers, retries,
 resume support, and a metadata browser.
+
+There are **two interchangeable implementations** with identical output:
+
+| File                 | Language | Scraping         | Downloading | Extra dependencies                |
+|----------------------|----------|------------------|-------------|-----------------------------------|
+| `tisch_download.go`  | Go       | HTTP GET + regex | stdlib      | none (Go standard library only)   |
+| `tisch_download.py`  | Python   | Selenium (browser) | requests  | `selenium`, `requests`, a browser |
+
+Both produce the same files and the same `--info` metadata table. The Go version
+is lighter and faster; the Python version uses Selenium to read the rendered DOM
+(handy if you prefer browser-based scraping). Selenium is technically optional —
+the gallery is server-rendered — but it's used in the Python edition by design.
 
 ---
 
@@ -23,6 +34,8 @@ TISCH2 serves the following files for each dataset under
 | `de`      | `<ID>_AllDiffGenes_table.tsv`  | Differential-expression table (TSV)  |
 
 Files are saved to `<out>/<ID>/`, e.g. `tisch_data/AEL_GSE142213/AEL_GSE142213_expression.h5`.
+The `<out>` directory is created **relative to your current working directory**
+unless you pass an absolute path.
 
 ---
 
@@ -39,59 +52,79 @@ Dataset IDs follow the pattern `<CancerType>_<Accession>[_suffixes]`:
 
 Example: `CRC_GSE146771_Smartseq2` → Colorectal Cancer, GEO GSE146771, sequenced with Smart-seq2.
 
-Use `-info` (see below) to print the full decoded metadata for any dataset.
+Use the `info` command (see below) to print the full decoded metadata for any dataset.
 
 ---
 
 ## Requirements
 
+**Go version**
+
 - Go 1.21 or newer (uses the standard library only — no external modules)
+
+**Python version**
+
+- Python 3.9 or newer
+- `pip install selenium requests`
+- A Chrome/Chromium install. Selenium 4.6+ auto-manages the browser driver
+  (Selenium Manager), so no manual driver download is needed.
 
 ---
 
-## Build
+## Build / install
+
+**Go**
 
 ```bash
-go build -o tisch_download tisch_download.go
+go build -o tisch_download tisch_download.go   # build a standalone binary
+# or run directly without building:
+go run tisch_download.go [flags]
 ```
 
-Or run without building:
+**Python**
 
 ```bash
-go run tisch_download.go [flags]
+pip install selenium requests
+python tisch_download.py [flags]
 ```
 
 ---
 
 ## Usage
 
-```
-tisch_download [flags]
-```
+Both versions share the same options; only the flag prefix differs (Go uses
+`-flag`, Python uses `--flag`).
 
-### Flags
+| Go flag        | Python flag         | Default                    | Description                                                       |
+|----------------|---------------------|----------------------------|-------------------------------------------------------------------|
+| `-out`         | `--out`             | `tisch_data`               | Output directory                                                  |
+| `-datasets`    | `--datasets`        | *(all)*                    | Comma-separated dataset IDs (default: every dataset in gallery)   |
+| `-types`       | `--types`           | `h5,exprzip,meta,de`       | Comma-separated artifact types to download                        |
+| `-concurrency` | `--concurrency`     | `4`                        | Number of datasets downloaded in parallel                         |
+| `-retries`     | `--retries`         | `3`                        | Retry attempts per file                                           |
+| `-timeout`     | `--timeout`         | `30m` (Go) / `300` (Py)    | Go: total per-file timeout. Python: read timeout (s) between chunks |
+| `-ipv4`        | `--ipv4/--no-ipv4`  | `true`                     | Force IPv4 (TISCH's IPv6 record is often unroutable)              |
+| `-base`        | `--base`            | `https://tisch.compbio.cn` | Base URL of the TISCH site                                        |
+| `-list`        | `--list`            | `false`                    | List dataset IDs and exit                                         |
+| `-info`        | `--info`            | `false`                    | Print dataset metadata table and exit                            |
+| —              | `--headless/--no-headless` | `true`              | (Python only) run the Selenium browser headless                   |
 
-| Flag           | Default                     | Description                                                              |
-|----------------|-----------------------------|--------------------------------------------------------------------------|
-| `-out`         | `tisch_data`                | Output directory                                                         |
-| `-datasets`    | *(all)*                     | Comma-separated dataset IDs to fetch (default: every dataset in gallery) |
-| `-types`       | `h5,exprzip,meta,de`        | Comma-separated artifact types to download                               |
-| `-concurrency` | `4`                         | Number of datasets downloaded in parallel                                |
-| `-retries`     | `3`                         | Retry attempts per file                                                  |
-| `-timeout`     | `30m`                       | Per-file download timeout                                                |
-| `-ipv4`        | `true`                      | Dial over IPv4 only (TISCH's IPv6 record is often unroutable)            |
-| `-base`        | `https://tisch.compbio.cn`  | Base URL of the TISCH site                                               |
-| `-list`        | `false`                     | List dataset IDs and exit                                                |
-| `-info`        | `false`                     | Print dataset metadata table and exit                                    |
+> **Note (Python):** Selenium starts only when scraping is needed — `--list`,
+> `--info`, or a download with no `--datasets`. Targeted downloads
+> (`--datasets ...`) use `requests` alone and never launch a browser.
 
 ---
 
 ## Examples
 
+Examples below show the Go form; for Python replace `./tisch_download` with
+`python tisch_download.py` and single dashes with double dashes.
+
 List every dataset ID:
 
 ```bash
-./tisch_download -list
+./tisch_download -list                 # Go
+python tisch_download.py --list        # Python
 ```
 
 Find datasets by cancer type:
@@ -106,9 +139,11 @@ Show metadata (cancer, species, treatment, patients, cells, platform, PMID, cita
 ./tisch_download -info -datasets AEL_GSE142213,BRCA_GSE176078
 ./tisch_download -info                       # all datasets
 ./tisch_download -info | grep -i melanoma    # filter by cancer type
+
+python tisch_download.py --info --datasets AEL_GSE142213,BRCA_GSE176078
 ```
 
-Example `-info` output:
+Example `-info` output (identical for both versions):
 
 ```
 DATASET_ID      CANCER                    SPECIES  TREATMENT  PATIENTS  CELLS   PLATFORM      PRI/META  PMID
@@ -123,24 +158,28 @@ Download everything (all datasets, all four file types):
 
 ```bash
 ./tisch_download -out tisch_data
+python tisch_download.py --out tisch_data
 ```
 
 Download a single dataset:
 
 ```bash
 ./tisch_download -datasets AEL_GSE142213
+python tisch_download.py --datasets AEL_GSE142213
 ```
 
 Download several datasets, only the metadata and DE tables (skips large matrices):
 
 ```bash
 ./tisch_download -datasets AEL_GSE142213,UVM_GSE139829 -types meta,de
+python tisch_download.py --datasets AEL_GSE142213,UVM_GSE139829 --types meta,de
 ```
 
 Download only expression matrices with more parallelism:
 
 ```bash
 ./tisch_download -types h5 -concurrency 6
+python tisch_download.py --types h5 --concurrency 6
 ```
 
 ---
@@ -156,8 +195,12 @@ Download only expression matrices with more parallelism:
   (e.g. some mouse datasets). A `404` is reported as `[miss]` and the run
   continues.
 - **IPv4 by default.** TISCH's DNS sometimes returns an IPv6 address that is not
-  routable on many networks, which makes `curl`/browsers hang. The tool dials
-  IPv4 by default; pass `-ipv4=false` to allow IPv6.
+  routable on many networks, which makes `curl`/browsers hang. Both versions
+  force IPv4 for downloads by default; pass `-ipv4=false` / `--no-ipv4` to allow
+  IPv6. (The Selenium browser uses its own DNS/Happy-Eyeballs and generally
+  falls back to IPv4 on its own.)
+- **The server can be slow/intermittent.** Transient connect timeouts on large
+  `h5` files are normal; the retry logic recovers on the next attempt.
 - **Status output.** Each file prints one of `[ok]`, `[skip]`, `[miss]`, or
   `[err]`, followed by a final summary line:
   `downloaded=… skipped=… missing=… errors=…`. The process exits non-zero if any
@@ -179,14 +222,17 @@ then scale up once you've confirmed it does what you need.
 
 ## How it works
 
-1. `GET /gallery/` and parse dataset IDs from the selection checkboxes
+1. Get the list of dataset IDs from the gallery selection checkboxes
    (`value="<ID>" name="dataset_checkbox_list"`).
+   - **Go:** `GET /gallery/` and parse the HTML with regex.
+   - **Python:** load `/gallery/` in Selenium and read the rendered DOM (which
+     conveniently omits the page's commented-out table cells).
 2. For each dataset, request the selected files from
    `/static/data/<ID>/<ID><suffix>`.
 3. A worker pool (`-concurrency`) downloads datasets in parallel; each file is
    fetched with retries, resume/skip logic, and atomic `.part` → final rename.
 
-The `-info` command additionally parses the gallery table for each dataset's
+The `info` command additionally reads the gallery table for each dataset's
 species, treatment, patient/cell counts, platform, primary/metastatic status,
 PMID, and citation. Cancer full-names are decoded from the ID prefix via a
 built-in map (mostly TCGA codes); the remaining columns are scraped live and are
